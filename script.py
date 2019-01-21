@@ -560,7 +560,6 @@ class App(object):
                             '1' if self.case_sensitive else '0']
                 f.writelines('\n'.join(settings))
         except:
-            print 'error saving settings'
             pass
 
     def load_settings(self):
@@ -581,7 +580,6 @@ class App(object):
                     self.out_file_path = os.path.join(self.root_path, out_file_path)
                     self.case_sensitive = settings[4].strip() == '1'
         except:
-            print 'error loading settings'
             pass
 
     def edit_case_sensitivity(self):

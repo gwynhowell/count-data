@@ -12,6 +12,9 @@ import os
 import re
 import time
 
+# the max field size limit defaults to 131072 bytes (2**17).
+# increase to 32 bits to accommodate for large csv files ...
+csv.field_size_limit(2**32)
 
 APP_NAME = 'CSV Counting & Analysis Tool'
 

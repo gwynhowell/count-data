@@ -279,7 +279,7 @@ class App(object):
         """
 
         filters = []
-        with open(self.filter_file_path, 'r') as f:
+        with open(self.filter_file_path, 'rU') as f:
             reader = csv.reader(f, delimiter=',', dialect=csv.excel)
 
             for x, row in enumerate(reader):
@@ -440,7 +440,7 @@ class App(object):
             result = [csv_file.num_str, csv_file.filename]
 
             fn = os.path.join(self.csv_path, csv_file.filename)
-            with open(fn, 'r') as f:
+            with open(fn, 'rU') as f:
                 reader = csv.reader(f, delimiter=',', dialect=csv.excel)
 
                 headers = None

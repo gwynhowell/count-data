@@ -117,6 +117,11 @@ class App(object):
         # attempt to silently load the csvs and filters now ...
         try:
             self._scan_for_csvs()
+        except:
+            # swallow the exception during startup ...
+            pass
+
+        try:
             self._scan_for_filters()
         except:
             # swallow the exception during startup ...

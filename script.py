@@ -12,6 +12,9 @@ import os
 import re
 import time
 
+import numpy as np
+
+
 # the max field size limit defaults to 131072 bytes (2**17).
 # increase to 32 bits to accommodate for large csv files ...
 csv.field_size_limit(2**32)
@@ -36,9 +39,9 @@ ACTION_PRINT_FILTERS = 2
 ACTION_RESCAN_CSVS = 3
 ACTION_RESCAN_FILTERS = 4
 ACTION_GENERATE_SAMPLE_FILTERS = 5
-ACTION_ANALYSE = 6
-ACTION_SETTINGS = 7
-ACTION_HELP = 8
+ACTION_DO_COUNT_ANALYSIS = 6
+ACTION_DO_STATS_ANALYSIS = 7
+ACTION_SETTINGS = 8
 ACTION_EXIT = 9
 
 ACTION_SETTING_EDIT_CASE_SENSITIVITY = 1
@@ -46,6 +49,12 @@ ACTION_SETTING_EDIT_CSV_PATH = 2
 ACTION_SETTING_EDIT_FILTER_PATH = 3
 ACTION_SETTING_EDIT_OUT_PATH = 4
 ACTION_SETTING_RESTORE_DEFAULTS = 5
+
+ANALYSIS_TYPE_COUNT = 'count'
+ANALYSIS_TYPE_STATS = 'stats'
+
+STATS_FORMULAS = ('Count', 'Mean', 'Standard deviation', 'Min', '25% Quantile', '50% Quantile', '75% Quantile', 'Max')
+STATS_FIELDS = ('Frequency', 'Read count', 'Coverage')
 
 SAMPLE_FILTERS = (
     'Count,>= 10,>=100',
@@ -149,8 +158,9 @@ class App(object):
                    ' 3) Re-scan CSV Files\n'
                    ' 4) Re-scan Filters\n'
                    ' 5) Generate sample filters.csv file\n'
-                   ' 6) Perform Analysis\n'
-                   ' 7) View / Edit Settings\n'
+                   ' 6) Perform Count Analysis\n'
+                   ' 7) Perform Stats Analysis\n'
+                   ' 8) View / Edit Settings\n'
                    # ' H) Help\n'
                    ' Q) Exit\n\n')
             msg = msg.format(len(self.csv_filenames),
@@ -177,8 +187,10 @@ class App(object):
                 self.scan_for_filters()
             elif action == ACTION_GENERATE_SAMPLE_FILTERS:
                 self.generate_sample_filters()
-            elif action == ACTION_ANALYSE:
-                self.analyse()
+            elif action == ACTION_DO_COUNT_ANALYSIS:
+                self.do_analysis(ANALYSIS_TYPE_COUNT)
+            elif action == ACTION_DO_STATS_ANALYSIS:
+                self.do_analysis(ANALYSIS_TYPE_STATS)
             elif action == ACTION_SETTINGS:
                 self.view_settings()
             else:
@@ -397,7 +409,9 @@ class App(object):
                                              val if val else "''")
         raw_input('\nHit any key to continue ...')
 
-    def analyse(self):
+    def do_analysis(self, analysis_type):
+        assert analysis_type in (ANALYSIS_TYPE_COUNT, ANALYSIS_TYPE_STATS)
+
         if not self.filters or not self.csv_filenames:
             msg = ('It is not possible to start the analysis without at least 1 input CSV file and 1 filter.'
                    '\nPlease use options (3) or (4) to re-scan.')
@@ -415,7 +429,11 @@ class App(object):
             print '\nAnalysing, please wait ...'
             time.sleep(1)
 
-            self._do_analysis()
+            if analysis_type == ANALYSIS_TYPE_COUNT:
+                self._do_count_analysis()
+            elif analysis_type == ANALYSIS_TYPE_STATS:
+                self._do_stats_analysis()
+
             self.write_results()
             self.write_errors()
 
@@ -433,7 +451,7 @@ class App(object):
         else:
             raw_input('\nAnalysis cancelled. No changes have been made.\nHit any key to continue ...')
 
-    def _do_analysis(self):
+    def _do_count_analysis(self):
         header = ['Num', 'File']
         for i, f in enumerate(self.filters):
             header.append('Filter {0}'.format(i + 1))
@@ -468,6 +486,88 @@ class App(object):
                     result.append(count)
             self.results.append(result)
 
+    def _do_stats_analysis(self):
+        header = ['Num', 'File']
+        for i, f in enumerate(self.filters):
+            for field in STATS_FIELDS:
+                for formula in STATS_FORMULAS:
+                    header.append('Filter {0} {1} {2}'.format(i + 1, field, formula))
+        self.results = [header]
+
+        for csv_file in self.csv_filenames:
+            result = [csv_file.num_str, csv_file.filename]
+
+            fn = os.path.join(self.csv_path, csv_file.filename)
+            with open(fn, 'rU') as f:
+                reader = csv.reader(f, delimiter=',', dialect=csv.excel)
+
+                headers = None
+                rows = []
+                for x, row in enumerate(reader):
+                    if x == 0:
+                        headers = row
+                    else:
+                        rows.append(row)
+
+                for f in self.filters:
+                    stats = {'Frequency': [],
+                             'Read count': [],
+                             'Coverage': []}
+
+                    for x, row in enumerate(rows):
+                        try:
+                            if self._check_filter(headers, row, f, csv_file.filename):
+                                for field in STATS_FIELDS:
+                                    val = self._get_numeric_val(headers, row, field)
+                                    stats[field].append(val)
+
+                        except AnalysisException, e:
+                            cell = ''
+                            if e.col_num is not None:
+                                cell = '%s%s' % (self._get_cell_ref(e.col_num+1), x+2)
+                            self.error_log.append((csv_file.filename, cell, e.message))
+
+                    for field in STATS_FIELDS:
+                        for formula in STATS_FORMULAS:
+                            stat_val = self._calculate_stat(formula, stats[field])
+                            result.append(stat_val)
+            self.results.append(result)
+
+    def _calculate_stat(self, formula, data):
+        val = 0.0
+        if formula == 'Count':
+            val = len(data)
+        elif formula == 'Mean':
+            val = np.mean(data)
+        elif formula == 'Standard deviation':
+            val = np.std(data)
+        elif formula == 'Min':
+            val = min(data)
+        elif formula == '25% Quantile':
+            val = np.percentile(data, 25)
+        elif formula == '50% Quantile':
+            val = np.percentile(data, 50)
+        elif formula == '75% Quantile':
+            val = np.percentile(data, 75)
+        elif formula == 'Max':
+            val = max(data)
+        return val
+
+    def _get_numeric_val(self, headers, row, field):
+        if field not in headers:
+            # field does not exist - return 0.0
+            return 0.0
+
+        col_num = headers.index(field)
+        val = row[col_num]
+
+        try:
+            val = float(val)
+            return val
+        except:
+            # val is not numeric - return 0.0
+            return 0.0
+
     def _check_filter(self, headers, row, filters, filename):
         for f in filters:
             field = f['field']
@@ -500,7 +600,8 @@ class App(object):
         self._write_csv_data_to_file(self.out_file_path, self.results)
 
     def write_errors(self):
-        self._write_csv_data_to_file(self.error_log_file_path, self.error_log)
+        if self.error_log:
+            self._write_csv_data_to_file(self.error_log_file_path, self.error_log)
 
     def _write_csv_data_to_file(self, filename, csv_data):
         """ writes csv data to a file
